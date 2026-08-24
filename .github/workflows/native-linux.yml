@@ -25,7 +25,7 @@ jobs:
             build-essential clang cmake ninja-build git ccache zlib1g-dev pkg-config \
             libvulkan1 vulkan-tools mesa-vulkan-drivers \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
-            libxss-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libudev-dev \
+            libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libudev-dev \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libegl1-mesa-dev
 
       - name: Restore build caches
