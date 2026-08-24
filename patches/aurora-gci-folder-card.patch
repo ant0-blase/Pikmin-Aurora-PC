@@ -1,0 +1,176 @@
+diff --git a/lib/card/CardGciFolder.cpp b/lib/card/CardGciFolder.cpp
+--- a/lib/card/CardGciFolder.cpp
++++ b/lib/card/CardGciFolder.cpp
+@@ -13,13 +13,13 @@ namespace aurora::card {
+
+ CardGciFolder::GciFile* CardGciFolder::get_file(uint32_t idx) {
+-  if (m_files.size() > idx) {
++  if (m_files.size() > idx && !m_files[idx].filename.empty()) {
+     return &m_files[idx];
+   }
+   return nullptr;
+ }
+
+ const CardGciFolder::GciFile* CardGciFolder::get_file(uint32_t idx) const {
+-  if (m_files.size() > idx) {
++  if (m_files.size() > idx && !m_files[idx].filename.empty()) {
+     return &m_files[idx];
+   }
+   return nullptr;
+@@ -119,8 +119,21 @@ ECardResult CardGciFolder::createFile(const char* filename, size_t size, FileHan
+   }
+
+   gciFileHeader->swapEndian();
+-  m_files.push_back({*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), true});
+-  handleOut = FileHandle(m_files.size() - 1, 0);
++  GciFile newEntry{*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), true};
++
++  // File numbers on a real memory card are stable directory slots.  Keep the
++  // vector index stable too: deleted entries become tombstones and are reused
++  // by the next create instead of shifting every later file number.
++  for (uint32_t i = 0; i < m_files.size(); ++i) {
++    if (m_files[i].filename.empty()) {
++      m_files[i] = std::move(newEntry);
++      handleOut = FileHandle(i, 0);
++      return ECardResult::READY;
++    }
++  }
++
++  m_files.push_back(std::move(newEntry));
++  handleOut = FileHandle(static_cast<uint32_t>(m_files.size() - 1), 0);
+
+   return ECardResult::READY;
+ }
+@@ -139,28 +150,83 @@ ECardResult CardGciFolder::closeFile(FileHandle& fh) {
+ }
+
+ void CardGciFolder::deleteFile(const FileHandle& fh) {
+-  auto file = get_open_file(fh);
+-  if (!file)
+-    return;
+-
+-  FileIO fileIO(m_folderPath / file->filename, true);
+-  if (fileIO)
+-    fileIO.deleteFile();
++  (void)deleteFile(fh.getFileNo());
+ }
+
+-ECardResult CardGciFolder::deleteFile(const char* filename) { return ECardResult::NOCARD; }
++ECardResult CardGciFolder::deleteFile(const char* filename) {
++  for (uint32_t i = 0; i < m_files.size(); ++i) {
++    const auto* file = get_file(i);
++    if (file != nullptr && std::strcmp(filename, file->file.m_filename) == 0) {
++      return deleteFile(i);
++    }
++  }
++  return ECardResult::NOFILE;
++}
+
+-ECardResult CardGciFolder::deleteFile(uint32_t fileno) { return ECardResult::NOCARD; }
++ECardResult CardGciFolder::deleteFile(uint32_t fileno) {
++  auto* gciFile = get_file(fileno);
++  if (gciFile == nullptr) {
++    return ECardResult::NOFILE;
++  }
++
++  const std::filesystem::path path = m_folderPath / gciFile->filename;
++  std::error_code ec;
++  const bool removed = std::filesystem::remove(path, ec);
++  if (ec) {
++    Log.error("Failed to delete GCI file '{}': {}", io::fs_path_to_string(path), ec.message());
++    return ECardResult::IOERROR;
++  }
++  if (!removed) {
++    return ECardResult::NOFILE;
++  }
++
++  // Preserve file-number stability.  Pikmin creates a temporary file, deletes
++  // the previous save, then renames the temporary file.  Erasing the vector
++  // element here would shift the temp file's file number and invalidate the
++  // handle/state retained by the game.
++  if (gciFile->file.m_firstBlock != 0 && gciFile->file.m_firstBlock != 0xFFFF) {
++    (void)m_bat.clear(gciFile->file.m_firstBlock, gciFile->file.m_blockCount);
++  }
++  *gciFile = GciFile{};
++  return ECardResult::READY;
++}
+
+ ECardResult CardGciFolder::renameFile(const char* oldName, const char* newName) {
+   for (auto& gciFile : m_files) {
+-    if (strcmp(oldName, gciFile.file.m_filename) == 0) {
+-      strncpy(gciFile.file.m_filename, newName, std::size(gciFile.file.m_filename));
++    if (!gciFile.filename.empty() && strcmp(oldName, gciFile.file.m_filename) == 0) {
++      const std::string newDiskName = fmt::format("{}-{}-{}.gci", m_maker, m_game, newName);
++      const std::u8string newDiskNameU8(reinterpret_cast<const char8_t*>(newDiskName.c_str()));
++      const std::filesystem::path oldPath = m_folderPath / gciFile.filename;
++      const std::filesystem::path newPath = m_folderPath / newDiskNameU8;
++
++      if (oldPath != newPath) {
++        std::error_code ec;
++        std::filesystem::rename(oldPath, newPath, ec);
++        if (ec) {
++          Log.error("Failed to rename GCI file '{}' to '{}': {}", io::fs_path_to_string(oldPath),
++                    io::fs_path_to_string(newPath), ec.message());
++          return ECardResult::IOERROR;
++        }
++        gciFile.filename = newDiskNameU8;
++      }
++
++      std::strncpy(gciFile.file.m_filename, newName, std::size(gciFile.file.m_filename) - 1);
++      gciFile.file.m_filename[std::size(gciFile.file.m_filename) - 1] = '\0';
++
++      // Persist the GameCube-visible filename in the GCI header immediately;
++      // otherwise the next launch sees the old '~Pikmin dataFile' again.
++      File tempFile = gciFile.file;
++      tempFile.swapEndian();
++      FileIO file(m_folderPath / gciFile.filename);
++      if (!file || !file.fileWrite(&tempFile, sizeof(File), 0)) {
++        Log.error("Failed to persist renamed GCI header '{}': {}", newName, SDL_GetError());
++        return ECardResult::IOERROR;
++      }
+       return ECardResult::READY;
+     }
+   }
+
+-  return ECardResult::NOCARD;
++  return ECardResult::NOFILE;
+ }
+
+ ECardResult CardGciFolder::fileWrite(FileHandle& fh, const void* buf, size_t size) {
+@@ -318,6 +393,9 @@ void CardGciFolder::format(ECardSlot deviceId, ECardSize size, EEncoding encodin
+
+ void CardGciFolder::commit() {
+   for (auto& gciFile : m_files) {
++    if (gciFile.filename.empty()) {
++      continue;
++    }
+     FileIO file(m_folderPath / gciFile.filename);
+
+     File tempFile = gciFile.file;
+diff --git a/lib/dolphin/card.cpp b/lib/dolphin/card.cpp
+--- a/lib/dolphin/card.cpp
++++ b/lib/dolphin/card.cpp
+@@ -555,7 +555,11 @@ s32 CARDRename(const s32 chan, const char* oldName, const char* newName) {
+     return CARD_RESULT_NOCARD;
+   const auto& card = GET_CARD(chan);
+
+-  return static_cast<s32>(card->renameFile(oldName, newName));
++  const auto res = card->renameFile(oldName, newName);
++  if (res == aurora::card::ECardResult::READY) {
++    card->commit();
++  }
++  return static_cast<s32>(res);
+ }
+
+ s32 CARDRenameAsync(const s32 chan, const char* oldName, const char* newName, const CARDCallback callback) {
+@@ -615,8 +620,8 @@ s32 CARDUnmount(const s32 chan) {
+   if (chan < 0 || chan >= 2) {
+     return CARD_RESULT_FATAL_ERROR;
+   }
+-  // TODO:
+-  return CARD_RESULT_NOCARD;
++  // The GCI-folder backend has no mount state to tear down.
++  return CARD_RESULT_READY;
+ }
+
+ s32 CARDGetCurrentMode(const s32 chan, u32* mode [[maybe_unused]]) {

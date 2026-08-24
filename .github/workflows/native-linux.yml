@@ -1,0 +1,56 @@
+name: Native Linux
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang cmake ninja-build git ccache zlib1g-dev pkg-config \
+            libvulkan1 vulkan-tools mesa-vulkan-drivers \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libudev-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libegl1-mesa-dev
+
+      - name: Restore build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            build/audio-deps
+            extern/audio-prefix
+          key: native-linux-${{ runner.os }}-${{ hashFiles('build.sh', 'CMakeLists.txt', 'cmake/**', 'src/port/**') }}
+          restore-keys: |
+            native-linux-${{ runner.os }}-
+
+      - name: Build native port
+        env:
+          CC: clang
+          CXX: clang++
+        run: ./build.sh --portable --jobs=2
+
+      - name: Verify binary
+        run: test -x build/linux/bin/pikmin
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pikmin-linux-x86_64
+          path: build/linux/bin/pikmin
+          if-no-files-found: error

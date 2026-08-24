@@ -1,0 +1,31 @@
+diff --git a/lib/input.cpp b/lib/input.cpp
+index 9cbc151..8576440 100644
+--- a/lib/input.cpp
++++ b/lib/input.cpp
+@@ -15,10 +15,22 @@ void persist_controller_for_player(uint32_t player, const GameController* contro
+ }
+ 
+ void initialize() noexcept {
+-  /* Make sure we initialize everything input related now, this will automatically add all of the connected controllers
+-   * as expected */
+-  AURORA_ASSERT(SDL_Init(SDL_INIT_HAPTIC | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD | SDL_INIT_SENSOR),
+-                "Failed to initialize SDL subsystems: {}", SDL_GetError());
++  /* Gamepad/joystick support is required by the port, but haptics and sensors are
++   * optional. Some distro SDL3 builds can be built without SDL haptic support.
++   * Treating that as fatal prevents otherwise fully functional controllers from
++   * being used. */
++  AURORA_ASSERT(SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD),
++                "Failed to initialize SDL controller subsystems: {}", SDL_GetError());
++
++  if (!SDL_InitSubSystem(SDL_INIT_SENSOR)) {
++    Log.warn("SDL sensor subsystem unavailable; continuing without sensors: {}", SDL_GetError());
++    SDL_ClearError();
++  }
++
++  if (!SDL_InitSubSystem(SDL_INIT_HAPTIC)) {
++    Log.warn("SDL haptic subsystem unavailable; continuing without force feedback: {}", SDL_GetError());
++    SDL_ClearError();
++  }
+ }
+ 
+ struct MouseScrollStatus {

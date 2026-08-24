@@ -1,0 +1,34 @@
+name: Matching decompilation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    container: ghcr.io/projectpiki/build:main
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [GPIE01_01, G98E01_PIKIDEMO, GPIE01_00, GPIP01_00, GPIJ01_01, GPIJ01_02, DPIJ01_PIKIDEMO, G98P01_PIKIDEMO]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Git config
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Prepare original files
+        run: cp -R /orig .
+
+      - name: Build matching target
+        run: |
+          python configure.py --map --version ${{ matrix.version }} \
+            --binutils /binutils --compilers /compilers
+          ninja all_source progress build/${{ matrix.version }}/report.json

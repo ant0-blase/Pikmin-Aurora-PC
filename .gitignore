@@ -1,0 +1,61 @@
+# Editors / OS
+.idea/
+.vs/
+.vscode/
+.DS_Store
+
+# Python / caches
+__pycache__/
+.mypy_cache/
+.cache/
+
+# Original game files / reverse-engineering outputs
+orig/*/*
+!orig/*/.gitkeep
+*.dol
+*.rel
+*.elf
+*.o
+*.map
+*.MAP
+*.iso
+*.gcm
+*.rvz
+*.wbfs
+*.id0
+*.id1
+*.id2
+*.nam
+*.idb
+*.til
+
+# Build outputs
+/build/
+.ninja_*
+build.ninja
+compile_commands.json
+objdiff.json
+ctx.*
+*.ctx
+
+# Bootstrapped third-party dependencies
+/extern/aurora/
+/extern/phosg/
+/extern/resource_dasm/
+/extern/audio-prefix/
+
+# Legacy generated tooling
+/decomp/
+tools/mwcc_compiler/
+tools/dtk/
+tools/powerpc/
+tools/vc6/
+mwcc_debugger.py
+/docs/generated/
+build.py
+*.lnk
+*.bat
+*.exe
+
+# Root scratch logs
+/*.txt
